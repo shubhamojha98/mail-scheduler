@@ -17,7 +17,9 @@ export function ComposePanel({ onSchedule, onDraft }: ComposePanelProps) {
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [date, setDate] = useState("");
+  const [date, setDate] = useState(
+    () => new Date().toISOString().split("T")[0],
+  );
   const [time, setTime] = useState("");
   const [attachmentName, setAttachmentName] = useState<string | null>(null);
   const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
@@ -29,7 +31,12 @@ export function ComposePanel({ onSchedule, onDraft }: ComposePanelProps) {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const canSchedule = Boolean(
-    to.trim() && subject.trim() && date && time && !isUploading && !isSubmitting
+    to.trim() &&
+    subject.trim() &&
+    date &&
+    time &&
+    !isUploading &&
+    !isSubmitting,
   );
 
   const whenLabel = useMemo(() => {
@@ -42,7 +49,9 @@ export function ComposePanel({ onSchedule, onDraft }: ComposePanelProps) {
     const h12 = hh % 12 === 0 ? 12 : hh % 12;
     const ampm = hh >= 12 ? "PM" : "AM";
     const label = `${
-      isToday ? "Today" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      isToday
+        ? "Today"
+        : d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
     }, ${h12}:${mm} ${ampm}`;
     return { label, hour: hh + d.getMinutes() / 60, iso: d.toISOString() };
   }, [date, time]);
@@ -72,7 +81,10 @@ export function ComposePanel({ onSchedule, onDraft }: ComposePanelProps) {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
       const data = await res.json();
 
       if (!res.ok) {
@@ -132,7 +144,9 @@ export function ComposePanel({ onSchedule, onDraft }: ComposePanelProps) {
       });
       resetForm();
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Failed to schedule email");
+      setSubmitError(
+        err instanceof Error ? err.message : "Failed to schedule email",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -174,7 +188,9 @@ export function ComposePanel({ onSchedule, onDraft }: ComposePanelProps) {
       });
       resetForm();
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Failed to save draft");
+      setSubmitError(
+        err instanceof Error ? err.message : "Failed to save draft",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -183,7 +199,9 @@ export function ComposePanel({ onSchedule, onDraft }: ComposePanelProps) {
   return (
     <div className="border-b lg:border-b-0 lg:border-r border-border flex flex-col">
       <div className="px-6 py-5 border-b border-border flex items-center justify-between">
-        <h1 className="font-display text-[17px] font-semibold tracking-tight">Compose</h1>
+        <h1 className="font-display text-[17px] font-semibold tracking-tight">
+          Compose
+        </h1>
         <span className="text-[11px] font-mono text-muted-foreground/70 uppercase tracking-wide">
           Draft
         </span>
@@ -236,7 +254,7 @@ export function ComposePanel({ onSchedule, onDraft }: ComposePanelProps) {
               ) : (
                 <Paperclip size={13} />
               )}
-              {isUploading ? "Uploading…" : attachmentName ?? "Attach file"}
+              {isUploading ? "Uploading…" : (attachmentName ?? "Attach file")}
               <input
                 type="file"
                 accept=".pdf,.jpg,.jpeg,application/pdf,image/jpeg"
@@ -305,7 +323,11 @@ export function ComposePanel({ onSchedule, onDraft }: ComposePanelProps) {
           {isSubmitting ? "Saving…" : "Save draft"}
         </Button>
         <Button onClick={handleSchedule} disabled={!canSchedule}>
-          {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Clock size={14} />}
+          {isSubmitting ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <Clock size={14} />
+          )}
           {isSubmitting ? "Scheduling…" : "Schedule send"}
         </Button>
       </div>

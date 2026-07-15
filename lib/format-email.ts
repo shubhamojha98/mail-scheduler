@@ -11,6 +11,7 @@ export function formatEmailRow(row: any): QueuedEmail {
       hour: null,
       attachmentUrl: row.attachment_url,
       attachmentName: row.attachment_name,
+      errorMessage: null,
     };
   }
 
@@ -40,5 +41,6 @@ export function formatEmailRow(row: any): QueuedEmail {
     hour,
     attachmentUrl: row.attachment_url,
     attachmentName: row.attachment_name,
+    errorMessage: row.error_message ?? null,
   };
 }
