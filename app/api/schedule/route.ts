@@ -1,19 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { qstash } from "@/lib/qstash";
-import { FROM_EMAIL } from "@/lib/resend";
+import { FROM_ADDRESS } from "@/lib/mailer";
+
+interface ScheduleRequestBody {
+  to: string;
+  subject: string;
+  body: string;
+  scheduledAt?: string; // ISO timestamp — optional when isDraft is true
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+  isDraft?: boolean;
+}
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const {
-    to,
-    subject,
-    body: emailBody,
-    scheduledAt, // ISO string, e.g. "2026-07-16T18:30:00.000Z"
-    attachmentUrl,
-    attachmentName,
-    isDraft,
-  } = body;
+  const payload: ScheduleRequestBody = await request.json();
+  const { to, subject, body, scheduledAt, attachmentUrl, attachmentName, isDraft } = payload;
 
   if (!to || !subject) {
     return NextResponse.json(
@@ -29,13 +31,26 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const sendAt = scheduledAt ? new Date(scheduledAt) : null;
+  if (sendAt && isNaN(sendAt.getTime())) {
+    return NextResponse.json({ error: "Invalid scheduledAt" }, { status: 400 });
+  }
+
   try {
-    // 1. Insert the row first so we have an id to pass to QStash.
     const status = isDraft ? "draft" : "scheduled";
 
+    // 1. Insert the row first so we have an id to pass to QStash.
     const [row] = await sql`
-      INSERT INTO emails (to_email, from_email, subject, body, scheduled_at, status, attachment_url, attachment_name)
-      VALUES (${to}, ${FROM_EMAIL}, ${subject}, ${emailBody ?? ""}, ${isDraft ? null : scheduledAt}, ${status}, ${attachmentUrl ?? null}, ${attachmentName ?? null})
+      INSERT INTO emails (
+        to_email, from_email, subject, body,
+        scheduled_at, status, attachment_url, attachment_name,
+        created_at, updated_at
+      ) VALUES (
+        ${to}, ${FROM_ADDRESS}, ${subject}, ${body ?? ""},
+        ${sendAt ? sendAt.toISOString() : null}, ${status},
+        ${attachmentUrl ?? null}, ${attachmentName ?? null},
+        now(), now()
+      )
       RETURNING id, to_email, subject, scheduled_at, status, attachment_url, attachment_name
     `;
 
@@ -49,13 +64,16 @@ export async function POST(request: NextRequest) {
       throw new Error("NEXT_PUBLIC_APP_URL is not set");
     }
 
+    // notBefore takes a Unix timestamp (seconds) — QStash won't deliver
+    // the webhook before this time, even if it's picked up sooner.
     const msg = await qstash.publishJSON({
       url: `${appUrl}/api/send-email`,
       body: { emailId: row.id },
-      notBefore: Math.floor(new Date(scheduledAt).getTime() / 1000),
+      notBefore: Math.floor((sendAt as Date).getTime() / 1000),
     });
 
-    // 3. Save the QStash message id back so we can trace/debug later.
+    // 3. Save the QStash message id so we can trace/debug or cancel later
+    //    (e.g. via qstash.messages.delete(msg.messageId)).
     await sql`
       UPDATE emails SET qstash_msg_id = ${msg.messageId}, updated_at = now()
       WHERE id = ${row.id}
