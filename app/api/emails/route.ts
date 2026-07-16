@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 
+export const dynamic = "force-dynamic"; // never cache — always hit Neon fresh
+
 export async function GET() {
   try {
-    // Drafts have no scheduled_at, so order those by created_at instead,
-    // and put scheduled ones first (soonest first).
     const rows = await sql`
       SELECT * FROM emails
       ORDER BY 

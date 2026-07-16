@@ -1,11 +1,14 @@
+
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Send, Loader2 } from "lucide-react";
 import { ComposePanel } from "@/components/email-scheduler/compose-panel";
 import { QueuePanel } from "@/components/email-scheduler/queue-panel";
 import { QueuedEmail } from "@/lib/types";
 import { formatEmailRow } from "@/lib/format-email";
+
+const POLL_INTERVAL_MS = 50000;
 
 export function EmailSchedulerDashboard() {
   const [queue, setQueue] = useState<QueuedEmail[]>([]);
@@ -14,22 +17,52 @@ export function EmailSchedulerDashboard() {
   const [toast, setToast] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // Tracks whether a fetch is already in flight, so overlapping polls
+  // (e.g. slow network + short interval) don't stack up.
+  const isFetchingRef = useRef(false);
+
   useEffect(() => {
-    loadEmails();
+    loadEmails(true);
+
+    const interval = setInterval(() => {
+      loadEmails(false);
+    }, POLL_INTERVAL_MS);
+
+    // Also refetch immediately when the tab regains focus/visibility —
+    // catches the case where a scheduled send fired while the tab was
+    // backgrounded and the user just switched back to it.
+    function handleVisibility() {
+      if (document.visibilityState === "visible") {
+        loadEmails(false);
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, []);
 
-  async function loadEmails() {
-    setIsLoading(true);
+  async function loadEmails(isInitial: boolean) {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    if (isInitial) setIsLoading(true);
     setLoadError(null);
+
     try {
       const res = await fetch("/api/emails");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load emails");
       setQueue(data.emails.map(formatEmailRow));
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Failed to load emails");
+      if (isInitial) {
+        setLoadError(err instanceof Error ? err.message : "Failed to load emails");
+      }
     } finally {
-      setIsLoading(false);
+      if (isInitial) setIsLoading(false);
+      isFetchingRef.current = false;
     }
   }
 
@@ -75,7 +108,7 @@ export function EmailSchedulerDashboard() {
         ) : loadError ? (
           <div className="flex flex-col items-center justify-center py-16 gap-2 text-[13px] text-destructive">
             {loadError}
-            <button onClick={loadEmails} className="underline text-muted-foreground">
+            <button onClick={() => loadEmails(true)} className="underline text-muted-foreground">
               Retry
             </button>
           </div>
