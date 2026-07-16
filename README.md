@@ -1,91 +1,107 @@
-# Email Scheduler — Dashboard UI
+# 📬 Email Scheduler
 
-Next.js 14 (App Router) + TypeScript + Tailwind CSS + shadcn/ui-style components.
-This is the **UI layer only** — no backend calls yet. The queue lives in React state
-(seeded with sample data in `lib/mock-data.ts`) so you can see the full flow before
-wiring up Upstash QStash / Resend / Neon.
+A full-stack email scheduling platform — compose, attach a PDF, pick a send time, and let the system deliver it automatically. Built entirely on free-tier infrastructure with no compromises on architecture.
 
-## Setup
+**🔗 Live demo:** [mail-scheduler-delta.vercel.app](https://mail-scheduler-delta.vercel.app/)
 
-```bash
-npm install
-npm run dev
-```
+---
 
-Open http://localhost:3000
+## Overview
 
-### PDF attachment uploads (Vercel Blob)
+Most "schedule send" features quietly rely on a server that stays awake and polls a database. This project instead uses a proper message-queue pattern — the scheduling logic doesn't run anywhere continuously; it's event-driven end to end, which is also why the entire stack fits inside free tiers.
 
-The "Attach PDF" button in Compose uploads to `app/api/upload/route.ts`, which
-stores the file in Vercel Blob and returns a URL. That URL is what you'd save
-in your Neon `emails` table (e.g. an `attachment_url` column) — the file
-itself never touches Postgres.
+**The flow:**
 
-To run this locally:
+1. Compose an email and attach a PDF in the dashboard.
+2. The PDF uploads to **Vercel Blob**; the email + attachment reference is saved to **Neon Postgres**.
+3. **Upstash QStash** is scheduled to call a webhook at the exact send time — no cron job, no server polling a queue.
+4. When that time arrives, QStash calls the app back, which sends the email (with the attachment) via **Resend** and updates the record's status.
 
-1. Push this project to a Git repo and import it on vercel.com (or run `vercel link`).
-2. In the Vercel dashboard: Storage → Create Database → Blob. Connect it to this project.
-3. Pull the auto-generated env var: `vercel env pull .env.local`
-   (this writes `BLOB_READ_WRITE_TOKEN` locally — see `.env.example`).
-4. `npm run dev` — uploads now work locally too.
+---
 
-Once deployed on Vercel, the token is injected automatically; no manual setup needed in production.
+## Tech Stack
 
-**Current limits enforced server-side:** PDF only, 10 MB max per file. Adjust
-`ALLOWED_TYPES` / `MAX_SIZE_BYTES` in `app/api/upload/route.ts` if needed.
+| Layer            | Technology                              |
+|-------------------|------------------------------------------|
+| Framework          | Next.js 14 (App Router) + TypeScript      |
+| Styling            | Tailwind CSS, shadcn-style local components |
+| Database           | Neon (serverless Postgres)                |
+| File storage        | Vercel Blob                              |
+| Job scheduling      | Upstash QStash                          |
+| Email delivery      | Resend                                  |
+| Hosting            | Vercel                                  |
 
-## Structure
+---
+
+## Features
+
+- **Compose & schedule** — pick any future date/time; no minimum lead time
+- **PDF attachments** — validated server-side (type + 10MB size limit), stored in Vercel Blob, streamed back in at send time
+- **Live send-queue timeline** — a 24-hour visual rail showing everything queued to go out, positioned by time of day
+- **Draft support** — save incomplete emails without scheduling them
+- **Status tracking** — every email row moves through `scheduled → sent` or `scheduled → failed`, with the error message captured if delivery fails
+- **Idempotent delivery** — if QStash retries a webhook call, the app checks status first and won't double-send
+
+---
+
+## Architecture Decisions
+
+**Why QStash instead of a cron job?**
+A cron-based approach means checking "is anything due?" on a timer, which wastes a run for every empty check and adds delivery lag equal to your polling interval. QStash instead schedules a single webhook call precisely at send time — the app does nothing until that exact moment, which is both faster and free of idle compute.
+
+**Why store only a URL for attachments, not the file itself?**
+Storing PDF bytes directly in Postgres bloats table size, slows backups, and costs more per GB than dedicated object storage. The `emails` table holds only an `attachment_url` reference; the file itself lives in Vercel Blob and is fetched only once, at send time.
+
+**Why local shadcn-style components instead of the shadcn CLI?**
+Owning the component files directly (`components/ui/*.tsx`) means no CLI dependency and no fighting the CLI's opinions on project structure — while still following the same `cva` + `cn()` conventions, so it drops into a shadcn-init'd project cleanly later if needed.
+
+---
+
+## Data Model
+
+A single `emails` table tracks each message through its lifecycle: `scheduled → sent` or `scheduled → failed`. Key fields:
+
+- **Identity & content** — `to_email`, `from_email`, `subject`, `body`
+- **Attachment reference** — `attachment_url` / `attachment_name` (the file itself lives in Vercel Blob, not the database)
+- **Scheduling** — `scheduled_at`, `sent_at`, `qstash_msg_id` (links back to the queued QStash job)
+- **State** — `status`, `error_message` (populated if delivery fails)
+
+---
+
+## Project Structure
 
 ```
 app/
-  layout.tsx          Root layout, loads global styles
-  page.tsx             Renders the dashboard
-  globals.css          Tailwind + shadcn CSS variable theme
+  api/
+    schedule/route.ts     Inserts email row + queues QStash job
+    send-email/route.ts   QStash webhook target — sends via Resend, updates status
+    upload/route.ts       Uploads PDF attachments to Vercel Blob
+  layout.tsx
+  page.tsx
 
 components/
-  email-scheduler/
-    dashboard.tsx       Holds queue state, composes the two panels
-    compose-panel.tsx   Form: to/subject/body/attachment/date/time
-    queue-panel.tsx     Wraps the timeline + list
-    timeline-rail.tsx   24h horizontal timeline of scheduled sends
-    queue-item.tsx      Single row in the queue list
-  ui/                   shadcn-style primitives (button, input, textarea,
-                        label, card, badge) — plain files, not pulled via
-                        the shadcn CLI, so they drop straight into a project
-                        that doesn't have shadcn initialized yet.
+  email-scheduler/        Feature components (compose panel, queue panel, timeline)
+  ui/                      Local shadcn-style primitives (button, input, card, badge, ...)
 
 lib/
-  types.ts              QueuedEmail / ComposeFormState types
-  mock-data.ts           Seed data for the queue
-  utils.ts               cn() class-merge helper
+  db.ts                    Neon Postgres client
+  resend.ts                Resend client
+  qstash.ts                QStash client (dev-mode aware)
+  types.ts                 Shared TypeScript types
 ```
 
-## Design tokens
+---
 
-- Accent (scheduled): `#2D5F4C` deep pine green
-- Accent (draft): `#B8860B` muted amber
-- Background: `#FAFAF8` soft paper white
-- Display font: Sora · Body: Inter · Timestamps/data: JetBrains Mono
+## Roadmap
 
-These live as Tailwind theme extensions in `tailwind.config.ts` and as HSL
-CSS variables in `app/globals.css` (the shadcn convention), so if you run
-`npx shadcn-ui@latest init` later it'll merge cleanly instead of conflicting.
+- [ ] Cancel / reschedule a queued email (via `qstashClient.messages.delete`)
+- [ ] Recipient list view with delivery history
+- [ ] Rich text editor for the message body
+- [ ] Verified sending domain (move off `onboarding@resend.dev`)
 
-## Next steps (when you're ready to go past UI-only)
+---
 
-1. ~~Attachments: upload to Vercel Blob~~ — done, see `app/api/upload/route.ts`.
-2. Swap the in-memory `useState` queue in `dashboard.tsx` for data fetched
-   from your Neon Postgres database (save `attachmentUrl` alongside each row).
-3. On "Schedule send", call a Next.js Route Handler that enqueues a job in
-   Upstash QStash for the chosen date/time.
-4. QStash's webhook calls back into a Route Handler that sends via Resend,
-   fetching the PDF from its Blob URL to attach it to the outgoing email.
+## Author
 
-## Fonts
-
-`Sora` and `JetBrains Mono` aren't loaded yet — add them via `next/font/google`
-in `app/layout.tsx` when you want the exact look:
-
-```tsx
-import { Inter, Sora, JetBrains_Mono } from "next/font/google";
-```
+**Shubham Kumar Ojha**
+Full Stack Developer · [GitHub](https://github.com/shubhamojha98) · [LinkedIn](https://linkedin.com/in/shubham-kumar-ojha)
